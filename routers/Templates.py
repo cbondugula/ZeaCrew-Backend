@@ -578,13 +578,15 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
                 tool_id = tool["id"]
                 print("Tool id:", tool_id, "-----------------------------")
                 tool_info = await tools_collection.find_one({"_id": ObjectId(tool_id)})
+                # tool_info = await tools_collection.find_one({"id": tool_id})
                 print("Tool Info:", tool_info)
 
                 if not tool_info:
                     continue  # Skip if tool info not found
 
-                tool_name = tool_info.get("name")
-
+                tool_name = tool_info.get("tool_name")
+                print("-----------------------------------------------------")
+                print(tool_info)
                 if tool_name == "SerperDevTool":
                     serper_api_key = tool_info.get("api_key")
                     if serper_api_key:
@@ -595,7 +597,7 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
                     if website_url:
                         tool_instance = WebsiteSearchTool(website=website_url)
                         break
-
+            
             if not tool_instance:
                 raise HTTPException(status_code=404, detail=f"No valid tool instance found for agent: {agent.get('role')}")
 
@@ -653,7 +655,7 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
         try:
             relevant_roles = json.loads(verifier_result.tasks_output[0].raw)
             if not relevant_roles:
-                return {"message": "The topic does not match any relevant agent roles. Please provide a more relevant prompt."}
+                return {"success": False,"message": "The topic does not match any relevant agent roles. Please provide a more relevant prompt."}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error parsing relevant roles: {e}\n Relevant agent roles for topic: {verifier_result.tasks_output[0].raw}")
  
