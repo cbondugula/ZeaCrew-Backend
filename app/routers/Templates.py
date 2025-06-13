@@ -267,7 +267,7 @@ async def get_all_enriched_chat_agents(user: dict = Depends(get_current_user)):
         print(f"Found {len(agents_docs)} systems")  # DEBUG
         if not agents_docs:
             return {
-                "success": False,
+                "success": True,
                 "message": "No enriched multi-agent systems found for this user",
                 "user": user,
                 "systems": []
@@ -1204,5 +1204,117 @@ async def edit_multi_agent_system(
         raise HTTPException(status_code=500, detail=f"Error editing system: {str(e)}")
 
 
+import json
 
+class AgentPrompt(BaseModel):
+    prompt: str
 
+def convert_objectid(doc):
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            if isinstance(value, ObjectId):
+                doc[key] = str(value)
+            elif isinstance(value, dict):
+                doc[key] = convert_objectid(value)
+            elif isinstance(value, list):
+                doc[key] = [convert_objectid(v) for v in value]
+    return doc
+
+@router.post("/crewai/agent-from-prompt")
+async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(get_current_user)):
+    try:
+        system_prompt = (
+            "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
+            "Top-level fields:\n"
+            "- enum: always set to 'DEFAULT'\n"
+            "- title: One-line title based on the use case\n"
+            "- description: A concise system description (max 500 chars)\n"
+            "- llm_provider: always 'OPENAI'\n"
+            "- search_provider: always 'SERPER'\n"
+            "- agents: a list of 2-3 agent objects\n\n"
+            "Each agent must include:\n"
+            "- agent_id: use a randomly generated UUID\n"
+            "- agent: agent name\n"
+            "- role\n"
+            "- goal\n"
+            "- backstory\n"
+            "- llms: return empty list\n"
+            "- tools: return empty list\n"
+            "- max_iter: 1\n"
+            "- max_rpm: 10\n"
+            "- allow_delegation: false\n"
+            "- tasks: a list with one task per agent having:\n"
+            "  - description\n"
+            "  - expected_output\n"
+            "  - agent_name (should match agent name)\n\n"
+            "Respond only with a valid JSON object."
+        )
+
+        llm = ChatOpenAI(model="gpt-4.1-nano", api_key=os.getenv("OPENAI_API_KEY"))
+        response = llm.invoke(f"{system_prompt}\n\nUser Prompt: {data.prompt}")
+
+        try:
+            response_data = json.loads(response.content)
+        except Exception as parse_err:
+            raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {parse_err}")
+
+        # Insert into MongoDB
+        insert_result = await TEMP_collection.insert_one(response_data)
+
+        return {
+            "message": "Agents successfully generated and stored",
+            "doc_id": str(insert_result.inserted_id),
+            "agent_count": len(response_data.get("agents", [])),
+            "data": convert_objectid(response_data)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent creation failed: {e}")
+
+# class AgentPrompt(BaseModel):
+#     prompt: str
+
+# @router.post("/crewai/agent-from-prompt")
+# async def generate_agents_from_prompt(data: AgentPrompt):
+#     try:
+#         system_prompt = (
+#             "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
+#             "Top-level fields:\n"
+#             "- enum: always set to 'CUSTOM'\n"
+#             "- title: One-line title based on the use case\n"
+#             "- description: A concise system description (max 500 chars)\n"
+#             "- llm_provider: always 'OPENAI'\n"
+#             "- search_provider: always 'SERPER'\n"
+#             "- agents: a list of 2-3 agent objects\n\n"
+#             "Each agent must include:\n"
+#             "- agent_id: use a randomly generated UUID\n"
+#             "- agent: agent name\n"
+#             "- role\n"
+#             "- goal\n"
+#             "- backstory\n"
+#             "- llms: return empty list\n"
+#             "- tools: return empty list\n"
+#             "- max_iter: 1\n"
+#             "- max_rpm: 10\n"
+#             "- allow_delegation: false\n"
+#             "- tasks: a list with one task per agent having:\n"
+#             "  - description\n"
+#             "  - expected_output\n"
+#             "  - agent_name (should match agent name)\n\n"
+#             "Respond only with a valid JSON object."
+#         )
+
+#         llm = ChatOpenAI(model="gpt-4.1-nano", api_key=os.getenv("OPENAI_API_KEY"))
+#         response = llm.invoke(f"{system_prompt}\n\nUser Prompt: {data.prompt}")
+
+#         try:
+#             # Attempt to parse JSON from LLM response
+#             import json
+#             response_data = json.loads(response.content)
+#         except Exception as parse_err:
+#             raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {parse_err}")
+
+#         return response_data
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Agent creation failed: {e}")
