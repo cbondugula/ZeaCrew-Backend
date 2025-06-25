@@ -198,37 +198,92 @@ async def signin(request: Request):
 
 
 
+# @router.post("/add_llm_connection")
+# async def add_llm_connection(request: Request, user: dict = Depends(get_current_user)):
+#     try:
+#         data = await request.json()
+#         name = data.get("name")
+#         provider = data.get("provider")  # Renamed from provider
+#         env_variables = data.get("envVariables", {})
+#         models = data.get("Models", [])
+
+#         if not name or not provider:
+#             raise HTTPException(status_code=400, detail="Missing required fields: 'name' or 'id'")
+
+#         if not isinstance(env_variables, dict) or not isinstance(models, list):
+#             raise HTTPException(status_code=400, detail="Invalid data format for 'envVariables' or 'Models'")
+
+#         # user_data = user.get("user", {})
+#         user_id = user
+
+#         # print("Extracted user:", user_data)  # Debugging
+#         # print("Extracted user_id:", user_id, type(user_id))  # Debugging
+
+#         if not user_id:
+#             raise HTTPException(status_code=401, detail="Unauthorized: User not found")
+
+#         # Convert ObjectId to string if needed
+#         user_id = str(user_id)
+
+#         connection_entry = {
+#             "user_id": user_id,
+#             "name": name,
+#             "provider": provider,  # Updated key name from provider
+#             "envVariables": env_variables,
+#             "Models": models,
+#             "createdOn": datetime.utcnow(),
+#             "updatedOn": datetime.utcnow()
+#         }
+
+#         inserted_id = llm_connections_collection.insert_one(connection_entry).inserted_id
+#         return JSONResponse(
+#             content={
+#                 "success": True,
+#                 "connection_id": str(inserted_id),
+#                 "message": "LLM Connection added successfully"
+#             },
+#             status_code=201
+#         )
+#     except HTTPException as http_err:
+#         return JSONResponse(content={"success": False, "error": http_err.detail}, status_code=http_err.status_code)
+#     except Exception as e:
+#         # logger.error(f"Error adding LLM Connection: {str(e)}")
+#         return JSONResponse(content={"success": False, "error": "An internal server error occurred."}, status_code=500)
+from bson import ObjectId
+
 @router.post("/add_llm_connection")
 async def add_llm_connection(request: Request, user: dict = Depends(get_current_user)):
     try:
         data = await request.json()
         name = data.get("name")
-        provider = data.get("provider")  # Renamed from provider
+        provider_id = data.get("provider")  # This is assumed to be the _id of provider
         env_variables = data.get("envVariables", {})
         models = data.get("Models", [])
 
-        if not name or not provider:
-            raise HTTPException(status_code=400, detail="Missing required fields: 'name' or 'id'")
+        if not name or not provider_id:
+            raise HTTPException(status_code=400, detail="Missing required fields: 'name' or 'provider'")
 
         if not isinstance(env_variables, dict) or not isinstance(models, list):
             raise HTTPException(status_code=400, detail="Invalid data format for 'envVariables' or 'Models'")
 
-        # user_data = user.get("user", {})
         user_id = user
-
-        # print("Extracted user:", user_data)  # Debugging
-        # print("Extracted user_id:", user_id, type(user_id))  # Debugging
-
         if not user_id:
             raise HTTPException(status_code=401, detail="Unauthorized: User not found")
 
-        # Convert ObjectId to string if needed
         user_id = str(user_id)
+
+        # 🔍 Fetch provider name from DB
+        provider_obj = llm_models_collection.find_one({"_id": ObjectId(provider_id)})
+        if not provider_obj:
+            raise HTTPException(status_code=404, detail="Provider not found")
+
+        provider_name = provider_obj.get("provider", "Unknown")
 
         connection_entry = {
             "user_id": user_id,
             "name": name,
-            "provider": provider,  # Updated key name from provider
+            "provider": provider_id,
+            "provider_name": provider_name,  # ✅ Added provider name
             "envVariables": env_variables,
             "Models": models,
             "createdOn": datetime.utcnow(),
@@ -247,7 +302,6 @@ async def add_llm_connection(request: Request, user: dict = Depends(get_current_
     except HTTPException as http_err:
         return JSONResponse(content={"success": False, "error": http_err.detail}, status_code=http_err.status_code)
     except Exception as e:
-        # logger.error(f"Error adding LLM Connection: {str(e)}")
         return JSONResponse(content={"success": False, "error": "An internal server error occurred."}, status_code=500)
 
 

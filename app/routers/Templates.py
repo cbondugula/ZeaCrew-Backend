@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from typing import List, Optional
-from pydantic import BaseModel,constr,Field
+from pydantic import BaseModel,constr,Field,ValidationError
 import os
 import logging
 from dotenv import load_dotenv
@@ -17,6 +17,7 @@ from crewai.memory.storage.rag_storage import RAGStorage
 from crewai.memory.storage.ltm_sqlite_storage import LTMSQLiteStorage
 from typing import List, Optional
 from fastapi.responses import JSONResponse
+from crewai import LLM
 # , pattern=r'^[a-zA-Z0-9\s]+$'
 
 
@@ -254,6 +255,115 @@ async def get_all_chat_agents(
 
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=f"Error fetching agents: {e}")
+# Helper: convert to ObjectIds safely
+
+# def to_object_ids(id_list):
+#     return [ObjectId(i) for i in id_list if ObjectId.is_valid(i)]
+
+# # Helper: fetch LLMs by ID
+# async def get_llm_details(llm_ids, llm_collection):
+#     cursor = llm_collection.find({"_id": {"$in": llm_ids}})
+#     return [{**llm, "_id": str(llm["_id"])} async for llm in cursor]
+
+# # Helper: fetch Tools by ID
+# async def get_tool_details(tool_ids, tool_collection):
+#     cursor = tool_collection.find({"_id": {"$in": tool_ids}})
+#     return [{**tool, "_id": str(tool["_id"])} async for tool in cursor]
+
+# @router.get("/chat-agent/enriched-all")
+# async def get_all_enriched_chat_agents(user: dict = Depends(get_current_user)):
+#     try:
+#         user_id = user
+#         print(f"Fetching systems for user_id: {user_id}")  # DEBUG
+
+#         agents_cursor = ENRICHED_COLLECTION.find({"user_id": user_id})
+#         agents_docs = await agents_cursor.to_list(length=None)
+
+#         print(f"Found {len(agents_docs)} systems")  # DEBUG
+#         if not agents_docs:
+#             return {
+#                 "success": True,
+#                 "message": "No enriched multi-agent systems found for this user",
+#                 "user": user,
+#                 "systems": []
+#             }
+
+#         result = []
+
+#         for doc in agents_docs:
+#             print(f"Processing system ID: {doc.get('_id')}")  # DEBUG
+#             system_data = {
+#                 "id": str(doc.get("_id")),
+#                 "enum": str(doc.get("enum")),
+#                 "title": doc.get("title"),
+#                 "description": doc.get("description"),
+#                 "llm_provider": doc.get("llm_provider"),
+#                 "search_provider": doc.get("search_provider"),
+#                 "agents": [],
+#                 "manager_agent": None
+#             }
+
+#             # Process regular agents
+#             for agent in doc.get("agents", []):
+#                 llm_ids = to_object_ids(agent.get("llms", []))
+#                 tool_ids = to_object_ids(agent.get("tools", []))
+#                 llms = await get_llm_details(llm_ids, llm_connections_collection)
+#                 tools = await get_tool_details(tool_ids, tools_collection)
+
+#                 system_data["agents"].append({
+#                     "agent_id": agent.get("agent_id"),
+#                     "agent_name": agent.get("agent"),
+#                     "role": agent.get("role"),
+#                     "goal": agent.get("goal"),
+#                     "backstory": agent.get("backstory"),
+#                     "llms": llms,
+#                     "tools": tools,
+#                     "max_iter": agent.get("max_iter", 1),
+#                     "max_rpm": agent.get("max_rpm", 10),
+#                     "allow_delegation": agent.get("allow_delegation", False),
+#                     "tasks": [
+#                         {
+#                             "description": task.get("description"),
+#                             "expected_output": task.get("expected_output"),
+#                             "agent_name": task.get("agent_name")
+#                         } for task in agent.get("tasks", [])
+#                     ]
+#                 })
+
+#             # Process manager agent
+#             manager = doc.get("manager_agent")
+#             if manager:
+#                 llm_ids = to_object_ids(manager.get("llms", []))
+#                 tool_ids = to_object_ids(manager.get("tools", []))
+#                 llms = await get_llm_details(llm_ids, llm_connections_collection)
+#                 tools = await get_tool_details(tool_ids, tools_collection)
+
+#                 system_data["manager_agent"] = {
+#                     "agent_id": manager.get("agent_id", "manager"),
+#                     "agent_name": manager.get("agent"),
+#                     "role": manager.get("role"),
+#                     "goal": manager.get("goal"),
+#                     "backstory": manager.get("backstory"),
+#                     "llms": llms,
+#                     "tools": tools,
+#                     "max_iter": manager.get("max_iter", 1),
+#                     "max_rpm": manager.get("max_rpm", 10),
+#                     "allow_delegation": manager.get("allow_delegation", True),
+#                     "tasks": manager.get("tasks", [])
+#                 }
+
+#             result.append(system_data)
+
+#         return {
+#             "success": True,
+#             "user": user,
+#             "systems": result
+#         }
+
+#     except Exception as e:
+#         print(f"Error: {e}")
+#         raise HTTPException(status_code=500, detail=f"Error fetching enriched agents: {e}")
+
 
 @router.get("/chat-agent/enriched-all")
 async def get_all_enriched_chat_agents(user: dict = Depends(get_current_user)):
@@ -417,20 +527,23 @@ async def enrich_agents_from_template(template_id: str, data: EnrichmentPayload,
         logging.exception("Failed to enrich agents")
         raise HTTPException(status_code=500, detail=f"Error: {e}")
     
-
+from datetime import datetime, timezone
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
-  
+from agent_watch import AgentWatchExtended 
 from app.socketHandler import sio 
 import re 
-import agentops
+# import agentops
 # agentops.init(os.getenv("AGENTOPS_API_KEY"))
 @router.post("/chat-agent/crew-run/{agent_id}")
 # async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id: str = Depends(get_current_user)):
 async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id: dict = Depends(get_current_user)):
+    watch = AgentWatchExtended(model="gpt-4o-mini")
+    watch.start()
+    start_time = datetime.utcnow()
     try:
         # agentops.init(os.getenv("AGENTOPS_API_KEY"))
-        agentops.init(api_key=os.getenv("AGENTOPS_API_KEY"),tags=[user_id])
+        # agentops.init(api_key=os.getenv("AGENTOPS_API_KEY"),tags=[user_id])
         print("Authenticated User ID:", user_id)
         body = await request.json()
         topic = body.get("topic")
@@ -509,34 +622,88 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
 #-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         # Fetch LLM data dynamically from the database
+        # agents = agent_data.get("agents", [])
+        # if not agents:
+        #     raise HTTPException(status_code=404, detail="No agents found in the document")
+
+        # for agent in agents:
+        #     llm_data = agent.get("llms")
+        #     if not llm_data or len(llm_data) == 0:
+        #         raise HTTPException(status_code=404, detail=f"LLM data not found in agent: {agent.get('role')}")
+        #     api_keys = {} 
+        #     openai_api_key = None
+        #     for llm in llm_data:
+        #         id = llm["id"]
+        #         llm_connection = await llm_connections_collection.find_one({"_id": ObjectId(id)})
+        #         # print(llm_connection,"---------------------------------------")--------------------------------
+
+        #         if llm_connection:
+        #             env_vars = llm_connection.get("envVariables", {})
+        #             for key, value in env_vars.items():
+        #                 api_keys[key] = value  # store all keys dynamically
+                
+        #     # print(f"API Keys for agent {agent.get('role')}: {api_keys}")--------------------------------------------
+
+        #     if not api_keys:
+        #         raise HTTPException(status_code=404, detail=f"No API keys found for agent: {agent.get('role')}")
+
+        #     # Example: you can access specific keys like this
+        #     openai_key = api_keys.get("OPENAI_API_KEY")    
+        #     print(openai_key)
         agents = agent_data.get("agents", [])
         if not agents:
             raise HTTPException(status_code=404, detail="No agents found in the document")
-
+        
         for agent in agents:
             llm_data = agent.get("llms")
-            if not llm_data or len(llm_data) == 0:
+            if not llm_data:
                 raise HTTPException(status_code=404, detail=f"LLM data not found in agent: {agent.get('role')}")
-            api_keys = {} 
-            openai_api_key = None
-            for llm in llm_data:
-                id = llm["id"]
-                llm_connection = await llm_connections_collection.find_one({"_id": ObjectId(id)})
-                # print(llm_connection,"---------------------------------------")--------------------------------
 
-                if llm_connection:
-                    env_vars = llm_connection.get("envVariables", {})
-                    for key, value in env_vars.items():
-                        api_keys[key] = value  # store all keys dynamically
-                
-            # print(f"API Keys for agent {agent.get('role')}: {api_keys}")--------------------------------------------
+            llm = None  # final object to be passed
+            for llm_entry in llm_data:
+                llm_id = llm_entry["id"]
 
-            if not api_keys:
-                raise HTTPException(status_code=404, detail=f"No API keys found for agent: {agent.get('role')}")
+                llm_connection = await llm_connections_collection.find_one({"_id": ObjectId(llm_id)})
+                if not llm_connection:
+                    continue
 
-            # Example: you can access specific keys like this
-            openai_key = api_keys.get("OPENAI_API_KEY")    
-            print(openai_key)
+                env_vars = llm_connection.get("envVariables", {})
+                provider_name = llm_connection.get("provider_name", "").lower()
+                model_name = llm_entry.get("model") or (llm_connection.get("Models", [None])[0])
+
+                if not model_name:
+                    raise HTTPException(status_code=400, detail=f"Model not specified for LLM connection: {llm_id}")
+
+                # Match provider and assign appropriate LLM
+                if provider_name == "openai":
+                    openai_api_key = env_vars.get("api_key") or env_vars.get("OPENAI_API_KEY")
+                    if not openai_api_key:
+                        raise HTTPException(status_code=400, detail="Missing OpenAI API key")
+                    llm = ChatOpenAI(model=model_name, api_key=openai_api_key)
+
+                elif provider_name == "gemini":
+                    gemini_api_key = env_vars.get("api_key") or env_vars.get("GEMINI_API_KEY")
+                    print(f"Gemini API Key: {gemini_api_key}")
+                    print("------------------------------------------------------------------GEMINI_API_KEY")
+                    if not gemini_api_key:
+                        raise HTTPException(status_code=400, detail="Missing Gemini API key")
+                    llm = LLM(model=model_name, api_key=gemini_api_key)
+
+                elif provider_name == "anthropic":
+                    anthropic_api_key = env_vars.get("api_key") or env_vars.get("ANTHROPIC_API_KEY")
+                    if not anthropic_api_key:
+                        raise HTTPException(status_code=400, detail="Missing Anthropic API key")
+                    llm = LLM(model=model_name, api_key=anthropic_api_key)
+
+                else:
+                    raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider_name}")
+
+            if not llm:
+                raise HTTPException(status_code=404, detail=f"No usable LLM configured for agent: {agent.get('role')}")
+
+            #  Now you can pass this into the agent
+            # agent_instance = Agent(..., llm=llm)
+            print(f"Agent {agent.get('role')} will use model {model_name} with provider {provider_name}")
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -618,7 +785,8 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
             backstory="AI expert trained to analyze prompt semantics and map them to Agent roles based on relevance",
             tools=[],
             verbose=True,
-            llm=ChatOpenAI(model="gpt-4.1-nano", api_key=openai_api_key)
+            llm=llm
+            # llm=ChatOpenAI(model="gpt-4.1-nano", api_key=openai_api_key)
         )
 
         verifier_task = Task(
@@ -684,9 +852,9 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
                         for key, value in env_vars.items():
                             api_keys[key] = value
 
-                manager_openai_key = api_keys.get("OPENAI_API_KEY")
-                if not manager_openai_key:
-                    raise HTTPException(status_code=404, detail="OpenAI API key not found for manager agent")
+                # manager_openai_key = api_keys.get("OPENAI_API_KEY")
+                # if not manager_openai_key:
+                #     raise HTTPException(status_code=404, detail="OpenAI API key not found for manager agent")
 
                 # Define the manager agent
                 manager_agent = Agent(
@@ -695,7 +863,8 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
                     backstory=agent_info.get("backstory"),
                     allow_delegation=True,
                     verbose=True,
-                    llm=ChatOpenAI(model=agent_info["llms"][0]["model"], api_key=manager_openai_key),
+                    llm=llm
+                    # llm=ChatOpenAI(model=agent_info["llms"][0]["model"], api_key=manager_openai_key),
                 )
                 # Skip adding the manager to agents, as it's handled separately
                 continue
@@ -707,7 +876,8 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
                 tools =tools,
                 verbose=True,
                 allow_delegation=allow_delegation,
-                llm=ChatOpenAI(model=agent_info["llms"][0]["model"], api_key=openai_api_key),
+                llm=llm
+                # llm=ChatOpenAI(model=agent_info["llms"][0]["model"], api_key=openai_api_key),
                   # Use the fetched API key for LLM
             )
             # agent.agent_name = agent_info.get("agent_name", "")
@@ -737,12 +907,44 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
 
      
         # Start the execution
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         result = await crew.kickoff_async()
+        watch.set_token_usage_from_crew_output(result)
         await sio.emit("final_result", {"message": "Crew execution complete", "result": str(result)}, to=sid)
-        end_time = datetime.utcnow()
-
+        end_time = datetime.now(timezone.utc)
         duration_seconds = (end_time - start_time).total_seconds()
+        # watch.end()  # ✅ END THE WATCH
+        # summary_text = watch.visualize(method='cli')  # <<< ADD THIS LINE
+        # print("=== Agent Watch Summary ===")
+        # print(summary_text)
+
+        # def extract_metric(pattern, text, default=None, cast_func=str):
+        #     match = re.search(pattern, text)
+        #     return cast_func(match.group(1)) if match else default
+
+        # agent_watch_metrics = {
+        #     "total_time_seconds": extract_metric(r"Total Time:\s*([\d.]+)", summary_text, 0.0, float),
+        #     "input_tokens": extract_metric(r"Input Tokens:\s*(\d+)", summary_text, 0, int),
+        #     "output_tokens": extract_metric(r"Output Tokens:\s*(\d+)", summary_text, 0, int),
+        #     "total_tokens": extract_metric(r"Total Tokens:\s*(\d+)", summary_text, 0, int),
+        #     "cost_usd": extract_metric(r"Cost:\s*\$([\d.]+)", summary_text, 0.0, float),
+        #     "average_cpu_usage": extract_metric(r"Average CPU Usage:\s*([\d.]+)%", summary_text, 0.0, float),
+        #     "average_memory_mb": extract_metric(r"Average Memory Usage:\s*([\d.]+)", summary_text, 0.0, float),
+        #     "carbon_emissions_kg": extract_metric(r"Carbon Emissions:\s*([\d.]+)", summary_text, 0.0, float)
+        # }
+        watch.end()  # Important to finalize monitoring
+
+        agent_watch_metrics = {
+            "total_time_seconds": f"{round(watch.total_time, 2)} sec",
+            "input_tokens": f"{watch.input_tokens} tokens",
+            "output_tokens": f"{watch.output_tokens} tokens",
+            "total_tokens": f"{watch.total_tokens} tokens",
+            "cost_usd": f"${round(watch.cost, 6)}",
+            "average_cpu_usage": f"{round(sum(watch.cpu_usage) / len(watch.cpu_usage), 2)}%",
+            "average_memory_mb": f"{round(sum(watch.memory_usage) / len(watch.memory_usage), 2)} MB",
+            "carbon_emissions_kg": f"{round(watch.carbon_emissions, 6)} kg CO₂"
+        }
+
         # print(f"Agent Name: {getattr(crew_tasks[i].agent, 'agent_name', 'N/A')}")
         # Collect outputs
         agent_outputs = []
@@ -779,6 +981,7 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
             "end_time": end_time,
             "duration_seconds": duration_seconds,
             "agent_outputs": agent_outputs,
+            "agent_watch": agent_watch_metrics,
             "timestamp": datetime.utcnow()
         }
         await db["crew_results"].insert_one(save_data)
@@ -789,6 +992,7 @@ async def run_crew_with_multiple_agents(request: Request, agent_id: str, user_id
             "final_report": str(result),
             "duration_seconds": duration_seconds,
             "agent_outputs": agent_outputs,
+            "agent_watch": agent_watch_metrics
         }
     
     except Exception as e:
@@ -1206,81 +1410,27 @@ async def edit_multi_agent_system(
 
 import json
 
-class AgentPrompt(BaseModel):
-    prompt: str
-
-def convert_objectid(doc):
-    if isinstance(doc, dict):
-        for key, value in doc.items():
-            if isinstance(value, ObjectId):
-                doc[key] = str(value)
-            elif isinstance(value, dict):
-                doc[key] = convert_objectid(value)
-            elif isinstance(value, list):
-                doc[key] = [convert_objectid(v) for v in value]
-    return doc
-
-@router.post("/crewai/agent-from-prompt")
-async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(get_current_user)):
-    try:
-        system_prompt = (
-            "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
-            "Top-level fields:\n"
-            "- enum: always set to 'DEFAULT'\n"
-            "- title: One-line title based on the use case\n"
-            "- description: A concise system description (max 500 chars)\n"
-            "- llm_provider: always 'OPENAI'\n"
-            "- search_provider: always 'SERPER'\n"
-            "- agents: a list of 2-3 agent objects\n\n"
-            "Each agent must include:\n"
-            "- agent_id: use a randomly generated UUID\n"
-            "- agent: agent name\n"
-            "- role\n"
-            "- goal\n"
-            "- backstory\n"
-            "- llms: return empty list\n"
-            "- tools: return empty list\n"
-            "- max_iter: 1\n"
-            "- max_rpm: 10\n"
-            "- allow_delegation: false\n"
-            "- tasks: a list with one task per agent having:\n"
-            "  - description\n"
-            "  - expected_output\n"
-            "  - agent_name (should match agent name)\n\n"
-            "Respond only with a valid JSON object."
-        )
-
-        llm = ChatOpenAI(model="gpt-4.1-nano", api_key=os.getenv("OPENAI_API_KEY"))
-        response = llm.invoke(f"{system_prompt}\n\nUser Prompt: {data.prompt}")
-
-        try:
-            response_data = json.loads(response.content)
-        except Exception as parse_err:
-            raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {parse_err}")
-
-        # Insert into MongoDB
-        insert_result = await TEMP_collection.insert_one(response_data)
-
-        return {
-            "message": "Agents successfully generated and stored",
-            "doc_id": str(insert_result.inserted_id),
-            "agent_count": len(response_data.get("agents", [])),
-            "data": convert_objectid(response_data)
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent creation failed: {e}")
-
 # class AgentPrompt(BaseModel):
 #     prompt: str
 
+# def convert_objectid(doc):
+#     if isinstance(doc, dict):
+#         for key, value in doc.items():
+#             if isinstance(value, ObjectId):
+#                 doc[key] = str(value)
+#             elif isinstance(value, dict):
+#                 doc[key] = convert_objectid(value)
+#             elif isinstance(value, list):
+#                 doc[key] = [convert_objectid(v) for v in value]
+#     return doc
+
 # @router.post("/crewai/agent-from-prompt")
-# async def generate_agents_from_prompt(data: AgentPrompt):
+# async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(get_current_user)):
 #     try:
 #         system_prompt = (
 #             "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
 #             "Top-level fields:\n"
-#             "- enum: always set to 'CUSTOM'\n"
+#             "- enum: always set to 'DEFAULT'\n"
 #             "- title: One-line title based on the use case\n"
 #             "- description: A concise system description (max 500 chars)\n"
 #             "- llm_provider: always 'OPENAI'\n"
@@ -1308,13 +1458,438 @@ async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(ge
 #         response = llm.invoke(f"{system_prompt}\n\nUser Prompt: {data.prompt}")
 
 #         try:
-#             # Attempt to parse JSON from LLM response
-#             import json
 #             response_data = json.loads(response.content)
 #         except Exception as parse_err:
 #             raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {parse_err}")
 
-#         return response_data
+#         # Insert into MongoDB
+#         insert_result = await TEMP_collection.insert_one(response_data)
+
+#         return {
+#             "message": "Agents successfully generated and stored",
+#             "doc_id": str(insert_result.inserted_id),
+#             "agent_count": len(response_data.get("agents", [])),
+#             "data": convert_objectid(response_data)
+#         }
 
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=f"Agent creation failed: {e}")
+# from openai import OpenAI 
+# class Message(BaseModel):
+#     role: str
+#     content: str
+
+# class AgentPrompt(BaseModel):
+#     # Now, 'messages' is mandatory and is always a list of Message objects
+#     messages: List[Message] = Field(..., min_length=1, description="A list of conversation messages, at least one message is required.")
+
+# # --- Existing convert_objectid function ---
+# def convert_objectid(doc):
+#     if isinstance(doc, dict):
+#         for key, value in doc.items():
+#             if isinstance(value, ObjectId):
+#                 doc[key] = str(value)
+#             elif isinstance(value, dict):
+#                 doc[key] = convert_objectid(value)
+#             elif isinstance(value, list):
+#                 doc[key] = [convert_objectid(v) for v in value]
+#     return doc
+
+# @router.post("/crewai/agent-from-prompt")
+# async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(get_current_user)):
+#     try:
+#         system_prompt_content = (
+#             "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
+#             "Top-level fields:\n"
+#             "- enum: always set to 'DEFAULT'\n"
+#             "- title: One-line title based on the use case\n"
+#             "- description: A concise system description (max 500 chars)\n"
+#             "- llm_provider: always 'OPENAI'\n"
+#             "- search_provider: always 'SERPER'\n"
+#             "- agents: a list of 2-3 agent objects\n\n"
+#             "Each agent must include:\n"
+#             "- agent_id: use a randomly generated UUID\n"
+#             "- agent: agent name\n"
+#             "- role\n"
+#             "- goal\n"
+#             "- backstory\n"
+#             "- llms: return empty list\n"
+#             "- tools: return empty list\n"
+#             "- max_iter: 1\n"
+#             "- max_rpm: 10\n"
+#             "- allow_delegation: false\n"
+#             "- tasks: a list with one task per agent having:\n"
+#             " - description\n"
+#             " - expected_output\n"
+#             " - agent_name (should match agent name)\n\n"
+#             "Respond only with a valid JSON object."
+#         )
+
+#         conversation_history = [{"role": "system", "content": system_prompt_content}]
+
+#         if data.prompt:
+#             # If a single prompt is provided, add it as a user message
+#             conversation_history.append({"role": "user", "content": system_prompt_content})
+#         elif data.messages:
+#             # If conversational messages are provided, extend the history
+#             conversation_history.extend([msg.model_dump() for msg in data.messages])
+#         else:
+#             # This case should ideally be caught by the Pydantic validator,
+#             # but it's good for robust error handling.
+#             raise HTTPException(status_code=400, detail="No prompt or messages provided.")
+
+#         # Initialize OpenAI client
+#         # It's better to initialize this once globally if possible, or use a dependency injection.
+#         client = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+#         completion = client.chat.completions.create(
+#             model="gpt-4o-mini", # Using gpt-4o-mini as a robust general-purpose model
+#             messages=conversation_history,
+#             response_format={"type": "json_object"}
+#         )
+#         response_content = completion.choices[0].message.content
+
+#         try:
+#             response_data = json.loads(response_content)
+#         except json.JSONDecodeError as parse_err:
+#             raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {parse_err}. Content: {response_content}")
+
+#         # Insert into MongoDB
+#         insert_result = await TEMP_collection.insert_one(response_data)
+
+#         return {
+#             "message": "Agents successfully generated and stored",
+#             "doc_id": str(insert_result.inserted_id),
+#             "agent_count": len(response_data.get("agents", [])),
+#             "data": convert_objectid(response_data)
+#         }
+
+#     except ValidationError as ve:
+#         raise HTTPException(status_code=422, detail=f"Validation error: {ve.errors()}")
+#     except Exception as e:
+#         print(f"Error during agent creation: {e}") # Log the error for debugging
+#         raise HTTPException(status_code=500, detail=f"Agent creation failed: {e}")
+
+from fastapi import APIRouter, Depends, HTTPException, status # 'status' import added for clarity
+from typing import List, Dict, Any, Optional
+from openai import OpenAI # Correct import for the OpenAI Python client
+class Message(BaseModel):
+    """Represents a single message in a conversation."""
+    role: str = Field(..., description="Role of the message sender (e.g., 'user', 'system').")
+    content: str = Field(..., description="Content of the message.")
+
+class AgentPrompt(BaseModel):
+    """
+    Input model for generating CrewAI agents, expecting a list of conversational messages.
+    This model now strictly uses the 'messages' list for all inputs (single or multi-turn).
+    """
+    messages: List[Message] = Field(..., min_length=1, description="A list of conversation messages. At least one message is required.")
+
+# --- Utility Function for MongoDB ObjectId Conversion ---
+def convert_objectid(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively converts MongoDB ObjectId instances within a dictionary (and its nested
+    dicts/lists) to their string representation, for JSON serialization.
+    """
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            if isinstance(value, ObjectId):
+                doc[key] = str(value)
+            elif isinstance(value, dict):
+                doc[key] = convert_objectid(value)
+            elif isinstance(value, list):
+                doc[key] = [convert_objectid(v) for v in value]
+    return doc
+
+@router.post("/crewai/agent-from-prompt", summary="Generate CrewAI Agents from Prompt")
+async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(get_current_user)):
+    """
+    Takes a user prompt (or conversation history) and, using an LLM, generates
+    a structured JSON output defining CrewAI agents and their tasks.
+    This generated data is then stored in MongoDB.
+    """
+    # Check if MongoDB connection was successful at startup
+    if TEMP_collection is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection not established. Please check server logs."
+        )
+
+    try:
+        # Define the system prompt that guides the LLM to produce the desired JSON structure.
+        # This prompt is crucial for instructing the AI on the expected output format.
+        system_prompt_content = (
+            "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
+            "Top-level fields:\n"
+            "- enum: always set to 'DEFAULT'\n"
+            "- title: One-line title based on the use case\n"
+            "- description: A concise system description (max 500 chars)\n"
+            "- llm_provider: always 'OPENAI'\n"
+            "- search_provider: always 'SERPER'\n"
+            "- agents: a list of 2-3 agent objects\n\n"
+            "Each agent must include:\n"
+            "- agent_id: use a randomly generated UUID (Python's uuid.uuid4() equivalent). This should be a string.\n"
+            "- agent: agent name (e.g., 'Market Analyst')\n"
+            "- role: agent's role (e.g., 'Senior Market Research Analyst')\n"
+            "- goal: agent's goal (e.g., 'Identify key market trends and opportunities')\n"
+            "- backstory: agent's backstory (e.g., 'Has 10 years of experience in tech market analysis')\n"
+            "- llms: return empty list\n"
+            "- tools: return empty list\n"
+            "- max_iter: 1\n"
+            "- max_rpm: 10\n"
+            "- allow_delegation: false\n"
+            "- tasks: a list with one task per agent having:\n"
+            "  - description: detailed description of the task\n"
+            "  - expected_output: what the task is expected to produce\n"
+            "  - agent_name: (should match the 'agent' field above)\n\n"
+            "Respond ONLY with a valid JSON object. Ensure agent_id is a valid UUID string."
+        )
+
+        # Construct the full conversation history for the LLM.
+        # This includes the guiding system prompt followed by the user's input messages.
+        conversation_history = [{"role": "system", "content": system_prompt_content}] + \
+                               [msg.model_dump() for msg in data.messages]
+
+        # Get OpenAI API key from environment variables. Essential for authentication.
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OPENAI_API_KEY environment variable not set. Please configure it."
+            )
+
+        # CORRECTED: Initialize the direct OpenAI client.
+        # This is the client that has the .chat.completions.create() method.
+        client_openai = OpenAI(api_key=openai_api_key)
+
+        # Make the API call to OpenAI's chat completion endpoint.
+        completion = client_openai.chat.completions.create(
+            model="gpt-4o-mini", # A good balance of cost and capability for this task
+            messages=conversation_history,
+            response_format={"type": "json_object"} # Explicitly request JSON output
+        )
+        response_content = completion.choices[0].message.content # Extract content from the LLM's response
+
+        try:
+            # Attempt to parse the LLM's string response into a JSON object.
+            response_data = json.loads(response_content)
+        except json.JSONDecodeError as parse_err:
+            # Handle cases where the LLM does not return valid JSON, which can happen.
+            print(f"LLM returned invalid JSON: {parse_err}. Content received: '{response_content}'")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"LLM returned invalid JSON. Error: {parse_err}. LLM output: {response_content[:200]}..." # Show snippet
+            )
+
+        # Insert the successfully parsed structured data into MongoDB.
+        # This stores the generated CrewAI configuration.
+        insert_result = await TEMP_collection.insert_one(response_data)
+
+        # Return a success response, including key details and the generated data.
+        return {
+            "success": True,
+            "message": "Agents successfully generated and stored",
+            "doc_id": str(insert_result.inserted_id), # Convert ObjectId to string for JSON serialization
+            "agent_count": len(response_data.get("agents", [])), # Count agents for convenience
+            "data": convert_objectid(response_data) # Ensure all ObjectIds are strings in the returned data
+        }
+
+    except ValidationError as ve:
+        # Catch Pydantic validation errors (e.g., empty messages list, malformed message)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "success": False,
+                "message": "Invalid input data format",
+                "errors": ve.errors()
+            }
+        )
+
+    except Exception as e:
+        # Catch any other unexpected errors during the process
+        print(f"An unexpected error occurred during agent creation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "success": False,
+                "message": "Agent creation failed due to an internal server error",
+                "error": str(e)
+            }
+        )
+
+# --- FastAPI Endpoint (Updated System Prompt) ---
+@router.post("/crewai/agent-from-prompt_m", summary="Generate CrewAI Agents from Prompt")
+async def generate_agents_from_prompt(data: AgentPrompt, user: dict = Depends(get_current_user)):
+    if TEMP_collection is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection not established. Please check server logs."
+        )
+
+    try:
+        # --- MODIFIED SYSTEM PROMPT CONTENT ---
+        system_prompt_content = (
+            "You are a CrewAI expert. Based on the given user prompt, generate a structured JSON output with the following fields:\n\n"
+            "Top-level fields:\n"
+            "- enum: always set to 'DEFAULT'\n"
+            "- title: One-line title based on the use case\n"
+            "- description: A concise system description (max 500 chars)\n"
+            "- llm_provider: always 'OPENAI'\n"
+            "- search_provider: always 'SERPER'\n"
+            "- agents: a list of 2-3 agent objects (excluding the manager)\n" # Clarified for LLM
+            "- manager_agent: a single agent object for the crew manager\n\n" # NEW FIELD
+            "Each agent (including the manager) must include:\n"
+            "- agent_id: use a randomly generated UUID (Python's uuid.uuid4() equivalent). This should be a string.\n"
+            "- agent: agent name (e.g., 'Market Analyst', 'Project Lead')\n"
+            "- role: agent's role (e.g., 'Senior Market Research Analyst', 'Crew Manager')\n"
+            "- goal: agent's goal (e.g., 'Identify key market trends and opportunities', 'Oversee crew operations')\n"
+            "- backstory: agent's backstory (e.g., 'Has 10 years of experience in tech market analysis', 'Experienced project leader')\n"
+            "- llms: return empty list\n"
+            "- tools: return empty list\n"
+            "- max_iter: 1\n"
+            "- max_rpm: 10\n"
+            "- allow_delegation: (for regular agents: false, for manager_agent: true)\n" # Clarified for LLM
+            "- tasks: (Only for regular agents, not for the manager_agent): a list with one task per agent having:\n"
+            "  - description: detailed description of the task\n"
+            "  - expected_output: what the task is expected to produce\n"
+            "  - agent_name: (should match the 'agent' field above)\n\n"
+            "Important Notes for Manager Agent:\n"
+            "- The `manager_agent` should have `allow_delegation: true`.\n"
+            "- The `manager_agent` should NOT have a `tasks` field.\n"
+            "- The `manager_agent`'s role and goal should reflect management responsibilities.\n\n"
+            "Respond ONLY with a valid JSON object. Ensure agent_id is a valid UUID string."
+        )
+        # --- END MODIFIED SYSTEM PROMPT ---
+
+        conversation_history = [{"role": "system", "content": system_prompt_content}] + \
+                               [msg.model_dump() for msg in data.messages]
+
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OPENAI_API_KEY environment variable not set. Please configure it."
+            )
+
+        client_openai = OpenAI(api_key=openai_api_key)
+
+        completion = client_openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=conversation_history,
+            response_format={"type": "json_object"}
+        )
+        response_content = completion.choices[0].message.content
+
+        try:
+            response_data = json.loads(response_content)
+        except json.JSONDecodeError as parse_err:
+            print(f"LLM returned invalid JSON: {parse_err}. Content received: '{response_content}'")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"LLM returned invalid JSON. Error: {parse_err}. LLM output: {response_content[:200]}..."
+            )
+
+        insert_result = await TEMP_collection.insert_one(response_data)
+
+        return {
+            "success": True,
+            "message": "Agents successfully generated and stored",
+            "doc_id": str(insert_result.inserted_id),
+            "agent_count": len(response_data.get("agents", [])),
+            "data": convert_objectid(response_data)
+        }
+
+    except ValidationError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "success": False,
+                "message": "Invalid input data format",
+                "errors": ve.errors()
+            }
+        )
+
+    except Exception as e:
+        print(f"An unexpected error occurred during agent creation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "success": False,
+                "message": "Agent creation failed due to an internal server error",
+                "error": str(e)
+            }
+        )
+    
+
+DRAFT_STORE = {}
+
+# Models
+class LLMPayload(BaseModel):
+    id: str
+    model: str
+
+class ToolPayload(BaseModel):
+    id: str
+
+class TaskPayload(BaseModel):
+    description: constr(min_length=6, max_length=500)# type: ignore
+    expected_output: constr(min_length=6, max_length=500)# type: ignore
+    agent_name: constr(min_length=6, max_length=500)# type: ignore
+
+class AgentPayload(BaseModel):
+    agent_id: str = uuid.uuid4().hex
+    agent: constr(min_length=6, max_length=500)# type: ignore
+    role: constr(min_length=6, max_length=500)# type: ignore
+    goal: constr(min_length=6, max_length=500)# type: ignore
+    backstory: constr(min_length=6, max_length=500)# type: ignore
+    llms: List[LLMPayload]
+    tools: List[ToolPayload]
+    max_iter: int = 1
+    max_rpm: int = 1
+    tasks: List[TaskPayload] = []
+    allow_delegation: bool = False
+
+class MultiAgentSystemPayload(BaseModel):
+    enum: Literal["CUSTOM"] = "CUSTOM"
+    title: constr(min_length=6, max_length=500)# type: ignore
+    description: constr(min_length=6, max_length=500)# type: ignore
+    process_type: Literal["Sequential", "Hierarchical"]
+    llm_provider: str
+    search_provider: str
+    agents: List[AgentPayload]
+    manager_agent: Optional[AgentPayload] = None
+
+# Draft create
+@router.post("/draft/create")
+def create_draft():
+    draft_id = uuid.uuid4().hex
+    DRAFT_STORE[draft_id] = {}
+    return {"draft_id": draft_id}
+
+# Draft update
+@router.put("/draft/{draft_id}")
+def update_draft(draft_id: str, payload: dict):
+    if draft_id not in DRAFT_STORE:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    DRAFT_STORE[draft_id] = payload
+    return {"success": True}
+
+# Draft get
+@router.get("/draft/{draft_id}")
+def get_draft(draft_id: str):
+    if draft_id not in DRAFT_STORE:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return DRAFT_STORE[draft_id]
+
+# Final submit
+@router.post("/multi-agent-system/submit/{draft_id}")
+def submit_system(draft_id: str):
+    if draft_id not in DRAFT_STORE:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    data = DRAFT_STORE[draft_id]
+    try:
+        system_payload = MultiAgentSystemPayload(**data)
+        del DRAFT_STORE[draft_id]
+        return {"success": True, "message": "System deployed", "data": system_payload.dict()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
