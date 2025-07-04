@@ -388,7 +388,7 @@ async def add_tool(tool: Tool, user_id: str = Depends(get_current_user)):
         tool_dict["created_on"] = datetime.utcnow().isoformat()
         tool_dict["user_id"] = user_id
 
-        # ✅ Match tool in tools_collection1 by `id`
+        # Match tool in tools_collection1 by `id`
         tool1 = await tools_collection1.find_one({"id": tool.id})
         tool_dict["tool_name"] = tool1["name"] if tool1 else None
 
